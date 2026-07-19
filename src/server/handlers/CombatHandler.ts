@@ -5773,15 +5773,6 @@ export class CombatHandler {
             completedEntity,
             { fromKillState: true }
         );
-        console.log('[CombatHandler] Verified required dungeon boss from client HP report', {
-            scope: levelScope,
-            sourceToken: client.token,
-            rawEntityId,
-            canonicalId,
-            name: String(completedEntity?.name ?? ''),
-            previousHp: healthState.currentHp,
-            amount
-        });
         return true;
     }
 

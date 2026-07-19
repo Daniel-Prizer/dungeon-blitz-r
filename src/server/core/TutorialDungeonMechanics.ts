@@ -282,12 +282,6 @@ function incrementRevision(state: TutorialDungeonMechanicsState): number {
     return state.revision;
 }
 
-function formatLogFields(fields: Record<string, unknown>): string {
-    return Object.entries(fields)
-        .map(([key, value]) => `${key}=${String(value ?? '').replace(/\s+/g, '_')}`)
-        .join(' ');
-}
-
 function getParticipantKey(client: Pick<Client, 'userId' | 'token' | 'character'>): string {
     const characterName = String(client.character?.name ?? '').trim().toLowerCase();
     const userId = Math.max(0, Math.round(Number(client.userId ?? 0)));
@@ -642,45 +636,20 @@ export class TutorialDungeonMechanics {
         client: Client,
         entity: any
     ): TutorialDungeonMechanicEvent[] {
-        console.log('[TutorialMechanics] noteEntityDefeated called', {
-            level: client?.currentLevel,
-            entityId: getEntityId(entity),
-            entityName: getEntityName(entity),
-            roomId: getEntityRoomId(entity, Number(client?.currentRoomId ?? 0)),
-            team: Number(entity?.team ?? EntityTeam.ENEMY),
-            dead: Boolean(entity?.dead),
-            destroyed: Boolean(entity?.destroyed),
-            hp: entity?.hp
-        });
-
         if (
             !client ||
             !TutorialDungeonMechanics.isTutorialDungeon(client.currentLevel) ||
             !entity ||
             entity.isPlayer
         ) {
-            console.log('[TutorialMechanics] rejected invalid level/entity');
             return [];
         }
-
-        const authority = TutorialDungeonMechanics.getAuthorityEntity(
-            entity,
-            Number(client.currentRoomId ?? 0)
-        );
-
-        console.log('[TutorialMechanics] resolved authority', {
-            authorityRole: authority?.role ?? 'none',
-            authorityName: authority?.name ?? 'none',
-            authorityId: authority?.id ?? 0
-        });
 
         const transition = TutorialDungeonMechanics.commitObjectTransition(
             client,
             entity,
             false
         );
-
-        console.log('[TutorialMechanics] transition result', transition);
 
         if (transition.accepted) {
             entity.dead = true;
@@ -784,15 +753,9 @@ export class TutorialDungeonMechanics {
         if (!state || isSamePhase || isCompletedRoomReplay) {
             return false;
         }
-        const previous = `${state.cutscenePhase}:${state.cutsceneRoomId}`;
         state.cutscenePhase = phase;
         state.cutsceneRoomId = normalizedRoomId;
         incrementRevision(state);
-        console.log(`[GoblinKidnappersAuthority] ${formatLogFields({
-            scope: levelScope, stableObjectId: 'cutscene', previousState: previous,
-            nextState: `${phase}:${state.cutsceneRoomId}`, revision: state.revision,
-            actor: actorToken, recipients: 0, dedupe: false
-        })}`);
         return true;
     }
 
@@ -811,14 +774,8 @@ export class TutorialDungeonMechanics {
         if (!state || phaseOrder[phase] <= phaseOrder[state.completionPhase]) {
             return false;
         }
-        const previous = state.completionPhase;
         state.completionPhase = phase;
         incrementRevision(state);
-        console.log(`[GoblinKidnappersAuthority] ${formatLogFields({
-            scope: levelScope, stableObjectId: 'completion', previousState: previous,
-            nextState: phase, revision: state.revision, actor: actorToken,
-            recipients: 0, dedupe: false
-        })}`);
         return true;
     }
 
@@ -853,39 +810,19 @@ export class TutorialDungeonMechanics {
         return { accepted: true, dedupe: false, rewardKey, openVersion: objectState.version, revision: state.revision };
     }
 
-    static logSnapshotApplied(client: Client, stableId: string, recipients: number, dedupe: boolean): void {
-        const state = TutorialDungeonMechanics.getClientState(client);
-        if (!state) {
-            return;
-        }
-        console.log(`[GoblinKidnappersAuthority] ${formatLogFields({
-            scope: state.levelScope, stableObjectId: stableId, previousState: 'client-local',
-            nextState: 'snapshot-applied', revision: state.revision, actor: client.token,
-            recipients, dedupe
-        })}`);
+    static logSnapshotApplied(_client: Client, _stableId: string, _recipients: number, _dedupe: boolean): void {
     }
 
     static logTransition(
-        state: TutorialDungeonMechanicsState,
-        authority: TutorialDungeonAuthorityEntity,
-        previousState: string,
-        nextState: string,
-        actorToken: number,
-        recipients: number,
-        dedupe: boolean,
-        result: string
+        _state: TutorialDungeonMechanicsState,
+        _authority: TutorialDungeonAuthorityEntity,
+        _previousState: string,
+        _nextState: string,
+        _actorToken: number,
+        _recipients: number,
+        _dedupe: boolean,
+        _result: string
     ): void {
-        console.log(`[GoblinKidnappersAuthority] ${formatLogFields({
-            scope: state.levelScope,
-            stableObjectId: authority.stableId,
-            previousState,
-            nextState,
-            revision: state.revision,
-            actor: actorToken,
-            recipients,
-            dedupe,
-            result
-        })}`);
     }
 
     static markCanonicalDefeated(entity: any): void {

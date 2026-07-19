@@ -374,6 +374,15 @@ function packetCount(client: FakeClient, packetId: number): number {
     return client.sentPackets.filter((packet) => packet.id === packetId).length;
 }
 
+function pendingLootValues(client: FakeClient): any[] {
+    return Array.from(client.pendingLoot.values());
+}
+
+function pendingGoldTotal(client: FakeClient): number {
+    return pendingLootValues(client)
+        .reduce((total, reward) => total + Math.max(0, Math.round(Number(reward.gold ?? 0) || 0)), 0);
+}
+
 function hpDeltasFor(client: FakeClient, entityId: number): number[] {
     return client.sentPackets
         .filter((packet) => packet.id === 0x78)
@@ -887,18 +896,19 @@ async function testLateAnnaChainCannotDeadlockBossCompletion(): Promise<void> {
     MissionHandler.noteDungeonCutsceneStart(client as never, 11);
     const beforeCutsceneEnd = DungeonCompletionSystem.evaluate(scope);
     assert.equal(beforeCutsceneEnd.ready, false, 'boss completion must not bypass the active end cutscene');
-    assert.equal(beforeCutsceneEnd.reason, 'cutscene_gate_pending');
+    assert.equal(beforeCutsceneEnd.reason, 'objectives_pending');
     assert.equal(packetCount(client, 0x87), 0, 'rank result must remain hidden until the end cutscene finishes');
 
     MissionHandler.noteDungeonCutsceneEnd(client as never, 11);
     await sleep(5);
 
-    assert.equal(DungeonCompletionSystem.evaluate(scope).objectivesMet, true);
-    assert.equal(packetCount(client, 0x87), 1, 'boss defeat cutscene should emit one rank result');
+    assert.equal(DungeonCompletionSystem.evaluate(scope).objectivesMet, false);
+    assert.equal(packetCount(client, 0x87), 0, 'boss defeat cutscene must still wait for Anna rescue');
 
     await MissionHandler.handleForcedDungeonObjectiveCompletion(client as never, annaChainEntity());
     await sleep(5);
-    assert.equal(packetCount(client, 0x87), 1, 'late chain state must not deadlock or duplicate completion');
+    assert.equal(DungeonCompletionSystem.evaluate(scope).objectivesMet, true);
+    assert.equal(packetCount(client, 0x87), 1, 'late chain state must complete after the boss cutscene without duplicates');
 }
 
 function testScriptedObjectiveStateIsIdempotent(): void {
@@ -1091,6 +1101,36 @@ async function testSharedTagUgoHpDeathAndReplayDedupe(): Promise<void> {
     assert.equal(packetCount(lateJoiner, 0x0D), 1, 'late joiner must receive the Tag Ugo tombstone');
 }
 
+async function testForcedTagUgoCompletionGrantsBossLootOnce(): Promise<void> {
+    const player = createFakeClient('BossLootRunner', 61351);
+    player.currentRoomId = 11;
+    resetFor(player);
+    GlobalState.sessionsByToken.set(player.token, player as never);
+    EntityHandler.sendInitialLevelEntities(player as never, 'TutorialDungeon');
+
+    const scope = getClientLevelScope(player as never);
+    const canonicalBoss = GlobalState.levelEntities.get(scope)?.get(TutorialDungeonMechanics.TAG_UGO_BOSS_ID);
+    assert.ok(canonicalBoss, 'Tag Ugo canonical server boss should be available for boss loot');
+
+    player.pendingLoot.clear();
+    player.sentPackets.length = 0;
+    await MissionHandler.handleForcedDungeonBossCompletion(player as never, bossEntity());
+
+    assert.equal(canonicalBoss.lootDropped, true, 'forced Tag Ugo completion should mark boss loot as dropped');
+    assert.ok(
+        pendingLootValues(player).some((reward) =>
+            Math.max(0, Number(reward.gold ?? 0)) > 0 ||
+            Math.max(0, Number(reward.health ?? 0)) > 0 ||
+            Math.max(0, Number(reward.gear ?? 0)) > 0
+        ),
+        'forced Tag Ugo completion should queue boss loot'
+    );
+
+    const lootCount = player.pendingLoot.size;
+    await MissionHandler.handleForcedDungeonBossCompletion(player as never, bossEntity());
+    assert.equal(player.pendingLoot.size, lootCount, 'replayed forced Tag Ugo completion must not duplicate boss loot');
+}
+
 function testChestRewardIsOncePerEligibleParticipant(): void {
     const opener = createFakeClient('ChestOpener', 61401);
     const peer = createFakeClient('ChestPeer', 61402);
@@ -1101,10 +1141,12 @@ function testChestRewardIsOncePerEligibleParticipant(): void {
     EntityHandler.handleEntityFullUpdate(opener as never, buildHostileFullUpdate(TutorialDungeonMechanics.TUTORIAL_CHEST_ID, 'TreasureChestEmpty', 5));
     EntityHandler.handleEntityFullUpdate(peer as never, buildHostileFullUpdate(TutorialDungeonMechanics.TUTORIAL_CHEST_ID, 'TreasureChestEmpty', 5));
 
-    const payload = buildGrantRewardPayload(TutorialDungeonMechanics.TUTORIAL_CHEST_ID, opener.clientEntID, 4);
+    const payload = buildGrantRewardPayload(TutorialDungeonMechanics.TUTORIAL_CHEST_ID, opener.clientEntID, 0);
     RewardHandler.handleGrantReward(opener as never, payload);
     assert.equal(opener.pendingLoot.size, 1);
     assert.equal(peer.pendingLoot.size, 1);
+    assert.equal(pendingGoldTotal(opener), 4, 'middle chest should use the server-authored gold value');
+    assert.equal(pendingGoldTotal(peer), 4, 'middle chest gold should be mirrored to eligible participants');
     const openerLootCount = opener.pendingLoot.size;
     const peerLootCount = peer.pendingLoot.size;
     RewardHandler.handleGrantReward(peer as never, buildGrantRewardPayload(TutorialDungeonMechanics.TUTORIAL_CHEST_ID, peer.clientEntID, 4));
@@ -1220,6 +1262,7 @@ async function main(): Promise<void> {
     await testEarlyChainBroadcastAndLateJoinSnapshot();
     await testOrderedDummiesOpenGateForLateJoiner();
     await testSharedTagUgoHpDeathAndReplayDedupe();
+    await testForcedTagUgoCompletionGrantsBossLootOnce();
     testChestRewardIsOncePerEligibleParticipant();
     testCutscenePhaseAndOwnerDepartureAreServerOwned();
     await testCompletionAndRankAreOncePerEligibleParticipant();

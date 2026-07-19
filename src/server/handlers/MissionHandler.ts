@@ -1560,6 +1560,7 @@ export class MissionHandler {
 
         if (currentLevel === 'TutorialDungeon') {
             TutorialDungeonMechanics.noteEntityDefeated(client, destroyedEntity);
+            MissionHandler.grantTutorialDungeonBossRewardIfNeeded(client, levelScope, destroyedEntity);
         }
 
         DungeonCompletionSystem.noteEntityDefeated(levelScope, destroyedEntity);
@@ -1599,6 +1600,70 @@ export class MissionHandler {
             }
         }
         MissionHandler.scheduleDungeonCompletionForScope(levelScope, client);
+    }
+
+    private static grantTutorialDungeonBossRewardIfNeeded(client: Client, levelScope: string, destroyedEntity: any): void {
+        if (
+            !TutorialDungeonMechanics.isCompletionBoss(levelScope, destroyedEntity) ||
+            !DungeonCompletionConditions.isRequiredBoss(getScopeLevelName(levelScope), destroyedEntity, levelScope)
+        ) {
+            return;
+        }
+
+        const bossId = TutorialDungeonMechanics.TAG_UGO_BOSS_ID;
+        const canonicalEntity = GlobalState.levelEntities.get(levelScope)?.get(bossId);
+        if (!canonicalEntity || Boolean(canonicalEntity.lootDropped)) {
+            return;
+        }
+
+        const finalizedAt = Date.now();
+        const maxHp = Math.max(
+            1,
+            Math.round(Number(canonicalEntity.maxHp ?? destroyedEntity?.maxHp ?? 0)) || 1
+        );
+        canonicalEntity.maxHp = maxHp;
+        canonicalEntity.hp = 0;
+        canonicalEntity.healthDelta = -maxHp;
+        canonicalEntity.health_delta = -maxHp;
+        canonicalEntity.dead = true;
+        canonicalEntity.destroyed = true;
+        canonicalEntity.entState = EntityState.DEAD;
+        canonicalEntity.deathFinalizedAt = Math.max(
+            0,
+            Math.round(Number(canonicalEntity.deathFinalizedAt ?? 0))
+        ) || finalizedAt;
+        canonicalEntity.bossDeathCommitted = true;
+        canonicalEntity.bossRespawnBlocked = true;
+
+        const lifeNonce = Math.max(0, Math.round(Number(canonicalEntity.lifeNonce ?? 0)));
+        const lootDropNonce = `${levelScope}:${bossId}:${lifeNonce}`;
+        canonicalEntity.lootDropNonce = lootDropNonce;
+        canonicalEntity.lootGrantedTokens = canonicalEntity.lootGrantedTokens instanceof Set
+            ? canonicalEntity.lootGrantedTokens
+            : new Set<number>(
+                Array.isArray(canonicalEntity.lootGrantedTokens)
+                    ? canonicalEntity.lootGrantedTokens.map((token: unknown) => Math.round(Number(token) || 0)).filter((token: number) => token > 0)
+                    : []
+            );
+        canonicalEntity.lootCollectedTokens = canonicalEntity.lootCollectedTokens instanceof Set
+            ? canonicalEntity.lootCollectedTokens
+            : new Set<string>(
+                Array.isArray(canonicalEntity.lootCollectedTokens)
+                    ? canonicalEntity.lootCollectedTokens.map((token: unknown) => String(token))
+                    : []
+            );
+        canonicalEntity.lootDrops = canonicalEntity.lootDrops instanceof Map
+            ? canonicalEntity.lootDrops
+            : new Map<number, unknown>();
+        canonicalEntity.deathRewardGrantedAt = finalizedAt;
+
+        RewardHandler.grantServerEnemyRewardToEligibleViewers(client, canonicalEntity, {
+            levelScope,
+            lootDropNonce,
+            sourceEnemyCanonicalId: bossId,
+            caller: 'tutorial_dungeon_completion_boss_reward'
+        });
+        canonicalEntity.lootDropped = true;
     }
 
     static async handleForcedDungeonObjectiveCompletion(client: Client, destroyedEntity: any): Promise<void> {
@@ -1823,14 +1888,20 @@ export class MissionHandler {
             ? GlobalState.levelEntities.get(scope)?.get(bossId) ?? client.entities.get(bossId)
             : null;
         const completionEligibleAtStart = Boolean(
-            bossEntity &&
             (
-                bossEntity.playerDamageContributed ||
-                bossEntity.clientDefeatVerified ||
-                bossEntity.dead ||
-                bossEntity.destroyed ||
-                Math.max(0, Math.round(Number(bossEntity.lastCombatActivityAt ?? 0))) > 0 ||
-                Number(bossEntity.hp ?? 1) <= 0
+                bossEntity &&
+                (
+                    bossEntity.playerDamageContributed ||
+                    bossEntity.clientDefeatVerified ||
+                    bossEntity.dead ||
+                    bossEntity.destroyed ||
+                    Math.max(0, Math.round(Number(bossEntity.lastCombatActivityAt ?? 0))) > 0 ||
+                    Number(bossEntity.hp ?? 1) <= 0
+                )
+            ) ||
+            (
+                TutorialDungeonMechanics.isTutorialDungeon(scope) &&
+                Boolean(TutorialDungeonMechanics.getState(scope)?.bossDefeated)
             )
         );
         DungeonCompletionSystem.noteCutsceneStart(

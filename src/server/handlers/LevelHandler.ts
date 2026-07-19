@@ -3296,16 +3296,7 @@ export class LevelHandler {
             roomId
         );
 
-        const evaluation =
-            DungeonCompletionSystem.evaluate(levelScope);
-
-        console.log('[TutorialCompletion]', {
-            levelScope,
-            roomId,
-            ready: evaluation.ready,
-            phase: evaluation.phase,
-            reason: evaluation.reason
-        });
+        DungeonCompletionSystem.evaluate(levelScope);
     }
 
     private static getSharedDungeonCutsceneKey(levelScope: string, roomId: number): string {

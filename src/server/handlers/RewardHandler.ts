@@ -1155,9 +1155,16 @@ export class RewardHandler {
             if (!claim.accepted) {
                 continue;
             }
+            const chestReward = { ...reward, sourceId: authority.id };
+            if (authority.role === 'tutorial_chest') {
+                chestReward.gold = Math.max(
+                    Math.round(Number(chestReward.gold ?? 0) || 0),
+                    4
+                );
+            }
             RewardHandler.applyRewardToRecipient(
                 recipient,
-                { ...reward, sourceId: authority.id },
+                chestReward,
                 `${authority.stableId}:${claim.openVersion}:${participantKey}`,
                 sourceEntity ?? {
                     id: authority.id,
